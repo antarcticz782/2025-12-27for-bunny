@@ -160,6 +160,8 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
     
 
     const stage = document.getElementById('stage');
@@ -208,6 +210,10 @@ scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
     const loader = new GLTFLoader();
     let model = null;
+    const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+loader.setDRACOLoader(dracoLoader);
+
 
     loader.load('./model.glb', (gltf)=>{
       model = gltf.scene;
