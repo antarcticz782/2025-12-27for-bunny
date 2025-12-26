@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snow Globe — For You</title>
+  <style>
+    :root{ --msgScale: 1; }
+
+    html, body{
+      height:100%;
+      margin:0;
+      background:#3056b6;
+      overflow:hidden;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+    }
+
+    #stage{ position:fixed; inset:0; z-index:0; }
+    canvas{ display:block; }
+
+    #ui{
+      position:fixed;
+      top:16px;
+      left:16px;
+      z-index:10;
+      display:flex;
+      gap:8px;
+    }
+    #ui button{
+      border:none;
+      border-radius:999px;
+      padding:8px 12px;
+      background:rgba(0,0,0,.35);
+      color:rgba(255,255,255,.92);
+      cursor:pointer;
+      backdrop-filter:blur(4px);
+      -webkit-backdrop-filter:blur(4px);
+      font-size:14px;
+    }
+    #ui button:hover{ background:rgb(56, 84, 144); }
+
+    /* 左侧 1/4 栏：默认尽量“一屏显示”，如果实在塞不下仍可滚轮滚动，但滚动条隐藏 */
+    #messageLayer{
+      position:fixed;
+      top:0; left:0;
+      width:25vw;
+      height:100vh;
+      padding:72px 12px 12px;
+      z-index:6;
+      box-sizing:border-box;
+
+      overflow-y:auto;      /* 允许滚轮，但… */
+      overflow-x:hidden;
+      scrollbar-width:none; /* Firefox 隐藏滚动条 */
+      -ms-overflow-style:none; /* 旧 Edge/IE */
+      pointer-events:auto;
+
+      transform-origin:top left;
+      transform:scale(var(--msgScale));
+    }
+    #messageLayer::-webkit-scrollbar{ width:0; height:0; } /* Chrome/Safari 隐藏滚动条 */
+
+    .msgItem{
+      display:block;
+      max-width:100%;
+      padding:3px 8px;
+      margin:3px 0;
+      border-radius:14px;
+
+      font-size:12px;
+      line-height:1.25;
+      letter-spacing:0.2px;
+      color:rgba(255,255,255,0.92);
+      text-align:left;
+
+      white-space:pre-wrap; /* ✅ 关键：保留段内换行（更像一段寄语），不再拆成一堆短条 */
+      user-select:none;
+
+      backdrop-filter:blur(2px);
+      -webkit-backdrop-filter:blur(2px);
+      text-shadow:0 2px 10px rgba(0,0,0,0.16), 0 0 12px rgba(255,255,255,0.10);
+      box-shadow:0 0 0 1px rgba(255,255,255,0.05) inset, 0 0 14px rgba(255,255,255,0.05);
+      background:rgba(255,255,255,0.08);
+    }
+
+    /* 鼠标雪花拖尾层 */
+    #mouseTrailLayer{
+      position:fixed;
+      inset:0;
+      z-index:8;
+      pointer-events:none;
+      overflow:hidden;
+    }
+    .trailDot{
+      position:absolute;
+      width:6px;
+      height:6px;
+      border-radius:50%;
+      background:rgba(255,255,255,0.95);
+      box-shadow:0 0 8px rgba(255,255,255,0.9);
+      pointer-events:none;
+      animation:trailFade .85s ease-out forwards;
+    }
+    @keyframes trailFade{
+      0%{ transform:translate(0,0) scale(1); opacity:1; }
+      100%{ transform:translate(0,12px) scale(0.05); opacity:0; }
+    }
+
+    /* 点击模型弹出的画（保留：你现在没提要去掉它） */
+    #artOverlay{
+      position:fixed;
+      inset:0;
+      z-index:9;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      background:radial-gradient(circle at center, rgba(0,0,0,0.18), rgba(0,0,0,0.70));
+    }
+    .artBox{
+      max-width:70vw;
+      max-height:80vh;
+      padding:8px;
+      border-radius:18px;
+      background:rgba(0,0,0,0.65);
+      box-shadow:0 18px 60px rgba(0,0,0,0.75);
+      overflow:hidden;
+    }
+    #artImage{ display:block; max-width:100%; max-height:100%; }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.159.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.159.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="messageLayer"></div>
+  <div id="mouseTrailLayer"></div>
+
+  <div id="artOverlay">
+    <div class="artBox">
+      <img id="artImage" src="./art.png" alt="Artwork" />
+    </div>
+  </div>
+
+  <div id="ui">
+    <button id="musicBtn">🎵 播放音乐</button>
+    <button id="snowBtn">❄️ 开启下雪</button>
+    <button id="spinBtn">🔄 自动旋转</button>
+  </div>
+
+  <audio id="bgm" src="./music.mp3" loop preload="auto"></audio>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    
+
+    const stage = document.getElementById('stage');
+    const renderer = new THREE.WebGLRenderer({ antialias:false, alpha:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    stage.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+
+// 先给一个默认蓝色，防止贴图还没加载好时是黑屏
+scene.background = new THREE.Color(0x5484FF);
+
+// 加载你自己的 2:1 全景图（文件名改成你实际的，比如 env.jpg）
+// 确保 env.jpg 和 index.html 在同一文件夹
+const texLoader = new THREE.TextureLoader();
+texLoader.load('./env.jpg', (tex) => {
+  // 告诉 three：这是 equirectangular 全景
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+
+  // 同时作为背景和环境贴图
+  scene.background  = tex;
+  scene.environment = tex;
+}, undefined, (error) => {
+  console.error('env.jpg 加载失败：', error);
+});
+
+// ↓ 从这里开始是原来的相机 / 控制器 / 灯光，保持不变
+const camera = new THREE.PerspectiveCamera(
+  45,
+  window.innerWidth / window.innerHeight,
+  0.01,
+  100
+);
+camera.position.set(0, 1.2, 3.2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+
+    const loader = new GLTFLoader();
+    let model = null;
+
+    loader.load('./model.glb', (gltf)=>{
+      model = gltf.scene;
+      scene.add(model);
+
+      model.traverse(obj=>{
+        if(!obj.isMesh) return;
+        const n = (obj.name || '').toLowerCase();
+        const mn = (obj.material?.name || '').toLowerCase();
+        if(n.includes('sphere') || n.includes('globe') || n.includes('球') || mn.includes('glass') || mn.includes('球')){
+          obj.material = new THREE.MeshPhysicalMaterial({
+            color:0xffffff,
+            metalness:0,
+            roughness:0.02,
+            transmission:0.0,
+            thickness:0.1,
+            ior:1.0,
+            transparent:true,
+            opacity:0.22,
+            envMapIntensity:0.1,
+            clearcoat:1.0,
+            clearcoatRoughness:0.12,
+            side:THREE.DoubleSide
+          });
+        }
+      });
+
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+
+      controls.target.set(0,0.9,0);
+      controls.update();
+    }, undefined, err=>{
+      console.error('GLB load error:', err);
+    });
+
+    // ===== 雪花点云 =====
+    const snowCount = 2000;
+    const snowGeo = new THREE.BufferGeometry();
+    const snowPos = new Float32Array(snowCount * 3);
+    for(let i=0;i<snowCount;i++){
+      snowPos[i*3+0] = (Math.random()-0.5)*6;
+      snowPos[i*3+1] = Math.random()*4;
+      snowPos[i*3+2] = (Math.random()-0.5)*6;
+    }
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos,3));
+    const snowMat = new THREE.PointsMaterial({
+      color:0xffffff,
+      size:3,
+      sizeAttenuation:false,
+      transparent:true,
+      opacity:0.95,
+      depthWrite:false
+    });
+    const snow = new THREE.Points(snowGeo, snowMat);
+    let snowOn = true;
+    snow.visible = snowOn;
+    scene.add(snow);
+
+    function updateSnow(){
+      const pos = snowGeo.attributes.position.array;
+      for(let i=0;i<snowCount;i++){
+        pos[i*3+1] -= 0.015 + Math.random()*0.1;
+        pos[i*3+0] += (Math.random()-0.5)*0.4;
+        pos[i*3+2] += (Math.random()-0.5)*0.5;
+        if(pos[i*3+1] < -0.2) pos[i*3+1] = Math.random()*4 + 0.8;
+      }
+      snowGeo.attributes.position.needsUpdate = true;
+    }
+
+    // ===== UI：音乐/下雪/旋转 =====
+    const bgm = document.getElementById('bgm');
+    const musicBtn = document.getElementById('musicBtn');
+    const snowBtn = document.getElementById('snowBtn');
+    const spinBtn = document.getElementById('spinBtn');
+
+    let musicOn = false;
+    musicBtn.addEventListener('click', async ()=>{
+      try{
+        if(!musicOn){
+          await bgm.play();
+          musicOn = true;
+          musicBtn.textContent = '⏸ 暂停音乐';
+        }else{
+          bgm.pause();
+          musicOn = false;
+          musicBtn.textContent = '🎵 播放音乐';
+        }
+      }catch(e){
+        console.warn('Play failed:', e);
+      }
+    });
+
+    snowBtn.addEventListener('click', ()=>{
+      snowOn = !snowOn;
+      snow.visible = snowOn;
+      snowBtn.textContent = snowOn ? '❄️ 关闭下雪' : '❄️ 开启下雪';
+    });
+
+    let spinOn = true;
+    spinBtn.addEventListener('click', ()=>{
+      spinOn = !spinOn;
+      spinBtn.textContent = spinOn ? '⏹ 停止旋转' : '🔄 自动旋转';
+    });
+
+    snowBtn.textContent = snowOn ? '❄️ 关闭下雪' : '❄️ 开启下雪';
+    spinBtn.textContent = spinOn ? '⏹ 停止旋转' : '🔄 自动旋转';
+
+    async function tryAutoPlay(){
+      try{
+        await bgm.play();
+        musicOn = true;
+        musicBtn.textContent = '⏸ 暂停音乐';
+      }catch(e){
+        console.warn('Autoplay blocked; will retry on first user interaction.');
+      }
+    }
+    tryAutoPlay();
+    window.addEventListener('pointerdown', ()=>{ if(!musicOn) tryAutoPlay(); }, { once:true });
+
+    // ===== 生日文案（原文不变）=====
+    const birthText = `
+生日快乐！
+Dear老韩：
+22岁生日快乐啊！
+看，我的技术又进步了（笑）
+去年是游戏，今年没有能力与精力去做《三人行2.0》了，毕竟写剧情，想文案，搭场景，完善逻辑真的很令人头大。所以做了这个，希望你能够喜欢。
+不过每一年的生日礼物都不一样，相信你打开这个链接时还是稍稍吃了一惊的，对吧？
+其实大部分功劳都多亏亲爱的G老师的帮助，我主要动脑子和复制粘贴（吐血）
+完成搭建的这一天恰好是平安夜，等你拆开这份礼物时，也仍沉浸在圣诞的余温中吧，所以我选了这一首背景音乐，还挺应景的(‾◡◝)
+这个模型完成时差不多有两个G，吓死我了。直接把我的blender干崩溃了。为了精简礼物，我把模型做了简化处理，才终于让我的blender恢复。所以现在的模型看起来会比较模糊。
+对啦，滚动鼠标中键可以放大和缩小模型，拖动屏幕还可以360°查看模型。点击模型还会有小惊喜噢！
+
+不知不觉间又到年底了，《恭喜你》也差不多该解冻了吧？我们的大学生活也快到尾声了。下一步该往哪走，或许你仍在踌躇，或许你已经下定决心准备启航，无论如何，年年岁岁又一年，今年和明年也要平安顺遂啊。
+希望明年，我们仍有机会一起沿着河堤街散步，从路的这头走到路的那头；一起在空无一人的小道上畅聊，望天，躲路上的虫子与游烟。
+
+`;
+
+    const messageLayer = document.getElementById('messageLayer');
+
+    // ✅ 新策略：按“段落”显示，而不是拆成很多短条
+    // 这样垂直空间更省，最后那一大段也不容易被挤掉。
+    function splitToParagraphBlocks(text){
+      return text
+        .trim()
+        .split(/\n\s*\n/)      // 按空行分段
+        .map(s=>s.trim())
+        .filter(Boolean);
+    }
+
+    function makeMsgItem(blockText){
+      const div = document.createElement('div');
+      div.className = 'msgItem';
+      div.textContent = blockText; // white-space:pre-wrap 会保留段内换行
+      return div;
+    }
+
+    const blocks = splitToParagraphBlocks(birthText);
+    blocks.forEach(b=>{
+      messageLayer.appendChild(makeMsgItem(b));
+    });
+
+    // ✅ 自动缩放：去掉“最低 0.55”的限制，否则内容多时会被裁掉
+    function autoScaleMessages(){
+      messageLayer.style.setProperty('--msgScale','1');
+      // 等浏览器先计算一次布局
+      const h = messageLayer.clientHeight;
+      const contentH = messageLayer.scrollHeight;
+      if(contentH <= 0) return;
+      let scale = Math.min(1, h / contentH);
+      // 给你一个更低的下限，宁可小一点也要“显示完整”
+      if(scale < 0.30) scale = 0.30;
+      messageLayer.style.setProperty('--msgScale', scale.toFixed(3));
+    }
+
+    // 首次渲染后做 2 次缩放（防止字体/布局还没稳定）
+    requestAnimationFrame(()=>{ autoScaleMessages(); setTimeout(autoScaleMessages, 120); });
+
+    // ===== 鼠标雪花拖尾 =====
+    const trailLayer = document.getElementById('mouseTrailLayer');
+    let lastTrailTime = 0;
+    window.addEventListener('pointermove', e=>{
+      const now = performance.now();
+      if(now - lastTrailTime < 16) return;
+      lastTrailTime = now;
+
+      const dot = document.createElement('div');
+      dot.className = 'trailDot';
+      dot.style.left = (e.clientX-3) + 'px';
+      dot.style.top  = (e.clientY-3) + 'px';
+      trailLayer.appendChild(dot);
+      setTimeout(()=>dot.remove(), 850);
+    });
+
+    // ===== 点击模型弹出画 =====
+    const artOverlay = document.getElementById('artOverlay');
+    const artImage   = document.getElementById('artImage');
+    let artReady = false;
+
+    if(artImage){
+      const checkReady = ()=>{ artReady = artImage.complete && artImage.naturalWidth>0; };
+      artImage.addEventListener('load', checkReady);
+      artImage.addEventListener('error', ()=>{ artReady=false; });
+      checkReady();
+    }
+
+    function showArtOverlay(show){
+      if(!artOverlay || !artReady) return;
+      artOverlay.style.display = show ? 'flex' : 'none';
+    }
+    if(artOverlay) artOverlay.addEventListener('click', ()=>showArtOverlay(false));
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    renderer.domElement.addEventListener('pointerdown', e=>{
+      if(!model || !artReady) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObject(model, true);
+      if(hits.length>0) showArtOverlay(true);
+    });
+
+    window.addEventListener('resize', ()=>{
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      autoScaleMessages();
+    });
+
+    function animate(){
+      requestAnimationFrame(animate);
+      controls.update();
+      if(spinOn && model) model.rotation.y += 0.005;
+      if(snowOn) updateSnow();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
