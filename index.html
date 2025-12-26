@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
   <title>Snow Globe — For You</title>
   <style>
     :root{ --msgScale: 1; }
@@ -126,6 +127,42 @@
       overflow:hidden;
     }
     #artImage{ display:block; max-width:100%; max-height:100%; }
+    /* 手机与小屏幕自适应 */
+@media (max-width: 768px) {
+
+  body {
+    overflow: hidden;           /* 防止乱滚动 */
+  }
+
+  #stage {
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* 左边那块生日祝福的气泡 */
+  #messageLayer {
+    left: 5vw;
+    top: 10vh;
+    width: 90vw;               /* 改成占整屏 90% 宽 */
+    max-height: 45vh;          /* 限制一下高度，下面留空间给雪景和球 */
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .msgItem {
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+
+  /* 顶部三个按钮：播放音乐 / 开启下雪 / 自动旋转 */
+  #ui {
+    top: 8px;
+    left: 8px;
+    transform: scale(0.9);     /* 稍微缩小一点按钮，不遮挡太多画面 */
+    transform-origin: top left;
+  }
+}
+
   </style>
 
   <script type="importmap">
